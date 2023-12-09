@@ -1,0 +1,14 @@
+#!/bin/sh
+
+./lint-check.sh
+lint_code=$?
+
+PYTHONPATH=src pytest tests/
+test_code=$?
+
+if [ "$lint_code" == "0" ] & [ "$test_code" == "0" ]
+then
+ exit 0
+else
+ exit 1
+fi
