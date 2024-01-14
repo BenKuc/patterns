@@ -5,7 +5,7 @@ from typing import Callable, Dict, List, Optional, Tuple, Type, Union
 # Patterns
 from patterns.state import settings
 from patterns.state._add import AddState
-from patterns.state._code_gen import StubGenerator
+from patterns.state._code_gen import generate_stubs
 from patterns.state._resolver import (
     ClassRegistryMap,
     MemberRegistryMap,
@@ -123,9 +123,6 @@ class StateRegistry:
         return MappingProxyType(self._registry), MappingProxyType(self._member_registry)
 
 
-_stub_generator = StubGenerator()
-
-
 def add_state(state: StateRegistry):
     def decorator(cls: Type):
         if state.resolved:
@@ -139,12 +136,7 @@ def add_state(state: StateRegistry):
         add_state_instance = AddState(resolved_state_definition)
         add_state_instance.add_state_to(cls)
         if settings.CREATE_OR_UPDATE_PYI_FILES:
-            # TODO(BK): this requires a more general state that collects information
-            #           about the files -> for a first step though, we will only get
-            #           our test-case with one class to work!
-            # TODO(BK): also if the file already exists, we need to inspect changes
-            #           and so on...
-            _stub_generator.generate_for_cls(cls, resolved_state_definition)
+            generate_stubs(cls, resolved_state_definition)
         return cls
 
     return decorator

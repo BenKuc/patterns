@@ -1,9 +1,10 @@
 # Standard Library
 import abc
 import inspect
+import itertools
 from pathlib import Path
 import sys
-from typing import Any, Iterable, List, Type, Union
+from typing import Any, Iterable, List, Optional, Type, Union
 
 # Patterns
 from patterns.state import settings
@@ -271,20 +272,100 @@ def composed_stub_generator_factory(member: StateMember):
         raise NotImplementedError(f'Unhandled member type: {type(member)}.')
 
 
-# TODO(BK): for now this can handle being called only once (for our test-case okay)
-# TODO(BK): if existent, stubs are the truth, so we need to add everything from class
-#           that concerns functions and annotations (how to deal with __init__?)
+def generate_stubs(cls: Type, state_definition: StateDefinition) -> None:
+    file_path = Path(sys.modules[cls.__module__].__file__)
+    pyi_path = file_path.with_suffix('.pyi')
+
+    if not pyi_path.exists():
+        stub_file = StubFile(objects=[])
+    else:
+        stub_file = StubFile.deserialize_from_path(path=pyi_path)
+
+    stub_file.add_cls(cls, state_definition)
+    stub_file.serialize_to_path(path=pyi_path)
+
+
+class StubObject(abc.ABC):
+    empty_lines_after: int
+
+    def __init__(self, empty_lines_after: Optional[int] = None):
+        self.empty_lines_after = empty_lines_after or self.empty_lines_after
+
+    @abc.abstractmethod
+    def serialize(self) -> List[str]:
+        return ['\n'] * self.empty_lines_after
+
+    @classmethod
+    @abc.abstractmethod
+    def deserialize(cls, lines: Iterable[str]) -> "StubObject":
+        ...
+
+
+class StubFile(StubObject):
+    empty_lines_after = 1
+
+    def __init__(
+        self, objects: List[StubObject], empty_lines_after: Optional[int] = None
+    ):
+        super().__init__(empty_lines_after)
+        # TODO(BK): or rather a map? -> rather separated class-map
+        self._objects: List[StubObject] = objects
+
+    @classmethod
+    def deserialize_from_path(cls, path: Path) -> "StubFile":
+        with open(str(path), mode='r') as fp:
+            return cls.deserialize(lines=fp.readlines())
+
+    def serialize_to_path(self, path: Path) -> None:
+        with open(str(path), mode='w') as fp:
+            lines = self.serialize()
+            fp.write('\n'.join(lines))
+
+    @classmethod
+    def deserialize(cls, lines: Iterable[str]) -> "StubFile":
+        # TODO(BK): do the following: implement a StubFile class that will get the stub-files's
+        #           lines and analyses them into sections, such that we can give members and
+        #           then parse everything back
+        objects = []
+        lines_iter = iter(lines)
+        while True:
+            try:
+                line = next(lines_iter)
+            except StopIteration:
+                break
+
+            for stub_cls in []:
+                if stub_cls.match(line):
+                    break
+
+            if line.strip() == '':
+                objects.append(UnspecificStubLine.deserialize([line]))
+                objects[-2].empty_lines_after += 1
+
+        return StubFile(objects)
+
+    def serialize(self) -> List[str]:
+        return list(
+            itertools.chain.from_iterable(obj.serialize() for obj in self._objects)
+        )
+
+    def add_cls(self, cls: Type, state_definition: StateDefinition) -> None:
+        # TODO(BK): if existent, stubs are the truth, so we need to add everything from class
+        #           that concerns functions and annotations (how to deal with __init__?)
+        # TODO(BK): read stuff from cls
+        # TODO(BK): read members
+        ...
+
+
 class StubGenerator:
     def generate_for_cls(self, cls: Type, state_definition: StateDefinition) -> None:
-        file_path = Path(sys.modules[cls.__module__].__file__)
-        self._check_no_overwrite(file_path)
-
         # TODO(BK): resolve duplicates
         # TODO(BK): add imports for states (rspv. all other classes...)
         # TODO(BK): comment for state (available in state...)
         # TODO(BK): what about the other classes? Shall we add them? We cannot import
         #           them -> for this use-case not required, transition has None
-        #           return-type
+        #           return-type -> just check if they are imported and if so, make them
+        #           a string or so for now
         imports_to_add = []
         cls_lines = [f'class {cls.__name__}:']
         # TODO(BK): ordered members isn't a good idea? -> gives us not enough control,
@@ -295,14 +376,18 @@ class StubGenerator:
             line = f'{INDENT}{line}'
             cls_lines.append(line)
 
-        pyi_path = file_path.with_suffix('.pyi')
-        with open(file=pyi_path, mode='w') as fp:
-            fp.write('\n'.join(cls_lines))
 
-    def _check_no_overwrite(self, path: Path):
-        pyi_path = path.with_suffix('.pyi')
-        if pyi_path.exists():
-            raise FileExistsError(
-                'pyi file {pyi_path} for already exist. Not yet smart enough to '
-                'overwrite.'
-            )
+class StubClass(StubObject):
+    empty_lines_after = 2
+
+
+class StubMethod(StubObject):
+    empty_lines_after = 0
+
+
+class StubAttribute(StubObject):
+    empty_lines_after = 0
+
+
+class UnspecificStubLine(StubObject):
+    empty_lines_after = 0
