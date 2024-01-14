@@ -1,154 +1,60 @@
 # Standard Library
 from dataclasses import dataclass, field
-import enum
-import itertools
-from types import MappingProxyType
-from typing import Callable, List, Optional, Tuple, Type, TypeVar, Union
-
-# Patterns
-from patterns.state.exceptions import StateConfigError
+from typing import Any, Callable, List, Type, Union
 
 
-class StateMember:
-    """Create the wrappers for the the target class."""
+@dataclass
+class Implementation:
+    implementation: Union[str, Type, Callable]
+    on: Type
 
+
+@dataclass
+class StateMemberBase:
     name: str
+    defined_on: Type
+    definition: Any
+    implementations: List[Implementation] = field(default_factory=list)
 
-    def modify_wrapper(self, wrapper: Callable):
-        # some classes are properties and need to init a property from the wrapper
-        return wrapper
+    def add_implementation(self, implementation: Implementation):
+        self.implementations.append(implementation)
+
+    @property
+    def is_implemented(self) -> bool:
+        return bool(self.implementations)
 
 
-@dataclass(frozen=True)
+def hash_number():
+    num = 0
+    while True:
+        yield num
+        num += 1
+
+
+hash_number_generator = hash_number()
+
+
+class StateMember(StateMemberBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._hash_number = next(hash_number_generator)
+
+    def __hash__(self) -> int:
+        return hash((StateMemberBase, self._hash_number))
+
+    def __eq__(self, other: 'StateMember') -> bool:
+        return self._hash_number == other._hash_number
+
+
 class StateAttribute(StateMember):
-    name: str
-    type_: Type
-
-    def modify_wrapper(self, wrapper: Callable):
-        return property(wrapper)
-
-
-RegistryKey = Tuple[str, str]
-
-
-@dataclass(frozen=True)
-class StateMethodBase(StateMember):
-    function: Callable
-
-    @property
-    def name(self):
-        return self.function.__name__
-
-    @property
-    def registry_key(self) -> RegistryKey:
-        cls_name, _, function_name = self.function.__qualname__.partition('.')
-        if not function_name:
-            raise StateConfigError(f'Cannot register function {cls_name}.')
-        return self.function.__module__, cls_name
-
-
-@dataclass(frozen=True)
-class StateMethod(StateMethodBase):
     pass
 
 
-@dataclass(frozen=True)
-class StateProperty(StateMethodBase):
-    def modify_wrapper(self, wrapper: Callable):
-        return property(wrapper)
+class StateMethod(StateMember):
+    pass
 
 
-StateType = TypeVar('StateType', bound='Type')
-
-
-@dataclass(frozen=True)
-class StateTransition(StateMethodBase):
-    transitions_to: Union[str, StateType]
-
-
-@dataclass(frozen=True)
-class MemberStateItem:
-    properties: dict[str, StateProperty] = field(default_factory=dict)
-    methods: dict[str, StateMethod] = field(default_factory=dict)
-    transitions: dict[str, StateTransition] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ClassStateItem:
-    cls: Type
-    initial: bool
-    abstract: bool
-    attributes: Optional[List[StateAttribute]]
-
-
-class InternalItemState(enum.Enum):
-    matched = 0
-    resolved = 1
-
-
-@dataclass(frozen=True)
-class StateItem:
-    cls: Type
-    initial: bool
-    abstract: bool
-    attributes: MappingProxyType[str, StateAttribute]
-    properties: MappingProxyType[str, StateProperty]
-    methods: MappingProxyType[str, StateMethod]
-    transitions: MappingProxyType[str, StateTransition]
-    internal_state: InternalItemState
-
-    @property
-    def members(self) -> List[StateMember]:
-        return [
-            *self.attributes.values(),
-            *self.properties.values(),
-            *self.methods.values(),
-            *self.transitions.values(),
-        ]
-
-    def inherit_from_state(self, other: 'StateItem') -> 'StateItem':
-        return StateItem(
-            cls=self.cls,
-            initial=self.initial,
-            abstract=self.abstract,
-            attributes=MappingProxyType(
-                mapping={**other.attributes, **self.attributes}
-            ),
-            methods=MappingProxyType(mapping={**other.methods, **self.methods}),
-            properties=MappingProxyType(
-                mapping={**other.properties, **self.properties}
-            ),
-            transitions=MappingProxyType(
-                mapping={**other.transitions, **self.transitions}
-            ),
-            internal_state=InternalItemState.resolved,
-        )
-
-    def with_new_internal_state(self, state: InternalItemState):
-        return StateItem(
-            cls=self.cls,
-            initial=self.initial,
-            abstract=self.abstract,
-            attributes=self.attributes,
-            methods=self.methods,
-            properties=self.properties,
-            transitions=self.transitions,
-            internal_state=state,
-        )
-
-
-@dataclass(frozen=True)
-class StateDefinition:
-    initial: StateItem
-    concretes: Tuple[StateItem, ...]
-
-    def ordered_members(self) -> List[StateMember]:
-        return sorted(
-            itertools.chain.from_iterable(state.members for state in self.concretes),
-            key=lambda member: {
-                StateAttribute: 0,
-                StateProperty: 1,
-                StateMethod: 2,
-                StateTransition: 3,
-            }[type(member)],
-        )
+class StateTransition(StateMember):
+    def __init__(self, *args, to: Union[str, Type], **kwargs):
+        super().__init__(*args, **kwargs)
+        self.to = to

@@ -1,84 +1,101 @@
+# Standard Library
+from typing import Optional
+
 # Third Party
 import pytest
 
 # Patterns
-from patterns.state import StateError, StateRegistry, add_state
-
-state = StateRegistry()
+from patterns.state import StateDefinition, StateError, state_transition
 
 
-class ArticleState:
-    def __repr__(self):
-        return f'{self.__class__.__name__}'
+class ArticleState(StateDefinition, state_cls_type='definition'):
+    cost: str
+    stock_location: int
+    price_sold: float
+    margin: float
+
+    @state_transition(to='Ordered')  # transitions must have 'to' as a return-type
+    def order(self, cost: float) -> 'Ordered':
+        ...
+
+    @state_transition(to='InStock')
+    def arrived_at_stock(self, stock_location: int) -> 'InStock':
+        ...
+
+    @state_transition(to='OnDispatch')
+    def ship(self, address: str, price_sold: float) -> 'OnDispatch':
+        ...
+
+    @state_transition(to='Sold')
+    def arrived_at_customer(self):
+        ...
 
 
-@state.register(initial=True)
-class Demanded(ArticleState):
-    @state.transition(to='Ordered')
+class Demanded(ArticleState, state_cls_type='state'):
     def order(self, cost: float) -> 'Ordered':
         return Ordered(cost)
 
 
-@state.register(abstract=True, attributes=['cost'])
 class CostMixin:
     def __init__(self, cost: float):
         self.cost = cost
 
 
-@state.register
-class Ordered(CostMixin, ArticleState):
-    @state.transition(to='InStock')
+class Ordered(CostMixin, ArticleState, state_cls_type='state'):
     def arrived_at_stock(self, stock_location: int) -> 'InStock':
         return InStock(cost=self.cost, stock_location=stock_location)
 
 
-@state.register(attributes=['stock_location'])
-class InStock(CostMixin, ArticleState):
+class InStock(CostMixin, ArticleState, state_cls_type='state'):
     def __init__(self, cost: float, stock_location: int):
         super().__init__(cost)
         self.stock_location = stock_location
 
-    @state.transition(to='OnDispatch')
     def ship(self, address: str, price_sold: float) -> 'OnDispatch':
         return OnDispatch(
             cost=self.cost, shipping_address=address, price_sold=price_sold
         )
 
 
-@state.register(abstract=True, attributes=['price_sold'])
 class SoldStateMixin(CostMixin):
     def __init__(self, cost: float, price_sold: float):
         super().__init__(cost)
         self.price_sold = price_sold
 
 
-@state.register(attributes=['shipping_address'])
-class OnDispatch(SoldStateMixin, ArticleState):
+class OnDispatch(SoldStateMixin, ArticleState, state_cls_type='state'):
     def __init__(self, *args, shipping_address: str, **kwargs):
         super().__init__(*args, **kwargs)
         self.shipping_address = shipping_address
 
-    @state.transition(to='Sold')
     def arrived_at_customer(self):
         return Sold(cost=self.cost, price_sold=self.price_sold)
 
 
-@state.register
-class Sold(SoldStateMixin, ArticleState):
-    @state.property_
+class Sold(SoldStateMixin, ArticleState, state_cls_type='state'):
+    @property
     def margin(self) -> float:
         return self.price_sold - self.cost
 
 
-@add_state(state)
-class Article:
-    number: int
-    category: str
-    initial_price: float
+class Article(ArticleState, state_cls_type='holder', default_state_cls=Demanded):
+    state: ArticleState
+
+    def __init__(
+        self,
+        number: int,
+        category: str,
+        initial_price: float,
+        state: Optional[ArticleState] = None,
+    ):
+        self.number = number
+        self.category = category
+        self.initial_price = initial_price
+        self.state = state or Demanded()
 
 
 def test():
-    article = Article()  # gets created with the default state
+    article = Article(number=1, category='shoes', initial_price=44.99)
 
     assert isinstance(article.state, Demanded)
 
@@ -94,7 +111,7 @@ def test():
 
     with pytest.raises(
         StateError,
-        match='Article object in state OnDispatch does not support calling stock_location.',
+        match='Member stock_location is not available on class Article in state OnDispatch.',
     ):
         _ = article.stock_location
 
